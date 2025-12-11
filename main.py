@@ -36,16 +36,45 @@ logger = logging.getLogger(__name__)
 console = Console()
 
 
+def setup_logging(verbose: bool = False, debug: bool = False):
+    """Configure logging level."""
+    if debug:
+        level = logging.DEBUG
+    elif verbose:
+        level = logging.INFO
+    else:
+        level = logging.WARNING
+    
+    # Configure root logger
+    logging.basicConfig(
+        level=level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        force=True
+    )
+    
+    # Also set level for our modules
+    for module in ['src.providers', 'src.benchmark', 'src.data']:
+        logging.getLogger(module).setLevel(level)
+
+
 @click.group()
 @click.version_option(version="1.0.0")
-def cli():
+@click.option('--verbose', '-v', is_flag=True, help='Enable verbose output (INFO level)')
+@click.option('--debug', is_flag=True, help='Enable debug output (DEBUG level, shows request/response)')
+@click.pass_context
+def cli(ctx, verbose, debug):
     """
     Content Moderation Benchmark Tool
     
     A framework for benchmarking content moderation API providers.
     Compare performance, accuracy, and reliability across different vendors.
+    
+    Use -v for verbose output, --debug for detailed request/response logs.
     """
-    pass
+    ctx.ensure_object(dict)
+    ctx.obj['verbose'] = verbose
+    ctx.obj['debug'] = debug
+    setup_logging(verbose, debug)
 
 
 @cli.command()

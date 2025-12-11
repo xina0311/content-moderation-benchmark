@@ -152,6 +152,15 @@ class ShumeiProvider(BaseProvider):
             try:
                 start_time = time.time()
                 
+                # Log request details at DEBUG level
+                logger.debug(f"=== API Request ===")
+                logger.debug(f"URL: {url}")
+                logger.debug(f"Content Type: {content_type.value}")
+                # Don't log accessKey for security
+                safe_payload = {k: v for k, v in payload.items() if k != 'accessKey'}
+                safe_payload['accessKey'] = '***HIDDEN***'
+                logger.debug(f"Payload: {safe_payload}")
+                
                 response = requests.post(
                     url,
                     json=payload,
@@ -165,6 +174,14 @@ class ShumeiProvider(BaseProvider):
                     data = response.json()
                     result.raw_response = data
                     result.success = True
+                    
+                    # Log response details at DEBUG level
+                    logger.debug(f"=== API Response ===")
+                    logger.debug(f"Response Time: {result.response_time*1000:.0f}ms")
+                    logger.debug(f"Risk Level: {data.get('riskLevel', 'N/A')}")
+                    logger.debug(f"Risk Label: {data.get('riskLabel1', 'N/A')}")
+                    logger.debug(f"Risk Description: {data.get('riskDescription', 'N/A')}")
+                    logger.debug(f"Full Response: {data}")
                     
                     # Parse response
                     if data.get("code") == 1100:  # Success

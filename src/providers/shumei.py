@@ -4,6 +4,7 @@ API Documentation: https://www.ishumei.com/help/documents.html
 """
 
 import time
+import json
 import logging
 import requests
 from typing import Dict, Any, List
@@ -153,13 +154,15 @@ class ShumeiProvider(BaseProvider):
                 start_time = time.time()
                 
                 # Log request details at DEBUG level
-                logger.debug(f"=== API Request ===")
+                logger.debug(f"\n{'='*60}")
+                logger.debug(f">>> API REQUEST")
+                logger.debug(f"{'='*60}")
                 logger.debug(f"URL: {url}")
                 logger.debug(f"Content Type: {content_type.value}")
                 # Don't log accessKey for security
                 safe_payload = {k: v for k, v in payload.items() if k != 'accessKey'}
                 safe_payload['accessKey'] = '***HIDDEN***'
-                logger.debug(f"Payload: {safe_payload}")
+                logger.debug(f"Payload:\n{json.dumps(safe_payload, ensure_ascii=False, indent=2)}")
                 
                 response = requests.post(
                     url,
@@ -176,12 +179,14 @@ class ShumeiProvider(BaseProvider):
                     result.success = True
                     
                     # Log response details at DEBUG level
-                    logger.debug(f"=== API Response ===")
+                    logger.debug(f"\n{'='*60}")
+                    logger.debug(f"<<< API RESPONSE")
+                    logger.debug(f"{'='*60}")
                     logger.debug(f"Response Time: {result.response_time*1000:.0f}ms")
                     logger.debug(f"Risk Level: {data.get('riskLevel', 'N/A')}")
                     logger.debug(f"Risk Label: {data.get('riskLabel1', 'N/A')}")
                     logger.debug(f"Risk Description: {data.get('riskDescription', 'N/A')}")
-                    logger.debug(f"Full Response: {data}")
+                    logger.debug(f"Full Response:\n{json.dumps(data, ensure_ascii=False, indent=2)}")
                     
                     # Parse response
                     if data.get("code") == 1100:  # Success

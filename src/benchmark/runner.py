@@ -2,13 +2,16 @@
 Benchmark runner for executing performance tests.
 """
 
+import csv
 import time
 import logging
+from pathlib import Path
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Optional, Callable
 from dataclasses import dataclass, field
 
-from ..providers.base import BaseProvider, ContentType, ModerationResult
+from ..providers.base import BaseProvider, ContentType, ModerationResult, RiskLevel
 from ..data.loader import TestCase, DataLoader
 from ..config import Config
 from .metrics import MetricsCollector, BenchmarkMetrics
@@ -32,12 +35,28 @@ class BenchmarkConfig:
 
 
 @dataclass
+class MismatchRecord:
+    """Record of a mismatch between API result and ground truth."""
+    case_id: str
+    content: str
+    content_type: str
+    expected_risk: str
+    actual_risk_level: str
+    actual_risk_label: str
+    risk_description: str
+    response_time_ms: float
+    raw_response: str
+
+
+@dataclass
 class BenchmarkResult:
     """Result of a complete benchmark run."""
     provider: str
     text_metrics: Optional[BenchmarkMetrics] = None
     image_metrics: Optional[BenchmarkMetrics] = None
     detailed_results: List[Dict[str, Any]] = field(default_factory=list)
+    text_mismatches: List[MismatchRecord] = field(default_factory=list)
+    image_mismatches: List[MismatchRecord] = field(default_factory=list)
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -159,20 +178,27 @@ class BenchmarkRunner:
         # Run text benchmark
         if test_text and text_cases:
             logger.info(f"Starting text benchmark: {len(text_cases)} cases")
-            result.text_metrics = self._run_benchmark(
+            result.text_metrics, result.text_mismatches = self._run_benchmark(
                 text_cases, 
                 ContentType.TEXT,
             )
             logger.info(f"Text benchmark complete: {result.text_metrics.success_rate:.1f}% success")
+            if result.text_mismatches:
+                logger.info(f"Text mismatches: {len(result.text_mismatches)} cases")
         
         # Run image benchmark
         if test_image and image_cases:
             logger.info(f"Starting image benchmark: {len(image_cases)} cases")
-            result.image_metrics = self._run_benchmark(
+            result.image_metrics, result.image_mismatches = self._run_benchmark(
                 image_cases,
                 ContentType.IMAGE,
             )
             logger.info(f"Image benchmark complete: {result.image_metrics.success_rate:.1f}% success")
+            if result.image_mismatches:
+                logger.info(f"Image mismatches: {len(result.image_mismatches)} cases")
+        
+        # Export mismatches to CSV
+        self._export_mismatches(result)
         
         return result
     
@@ -180,7 +206,7 @@ class BenchmarkRunner:
         self,
         test_cases: List[TestCase],
         content_type: ContentType,
-    ) -> BenchmarkMetrics:
+    ) -> tuple:
         """
         Run benchmark for a specific content type.
         
@@ -189,12 +215,14 @@ class BenchmarkRunner:
             content_type: Type of content being tested
             
         Returns:
-            BenchmarkMetrics with results
+            Tuple of (BenchmarkMetrics, List[MismatchRecord])
         """
         collector = MetricsCollector(
             provider=self.provider.name,
             content_type=content_type.value,
         )
+        
+        mismatches: List[MismatchRecord] = []
         
         collector.start()
         
@@ -230,6 +258,11 @@ class BenchmarkRunner:
                         test_case.category,
                     )
                     
+                    # Check for mismatch
+                    mismatch = self._check_mismatch(test_case, mod_result, content_type)
+                    if mismatch:
+                        mismatches.append(mismatch)
+                    
                     # Callback
                     if self._on_result:
                         self._on_result(test_case, mod_result)
@@ -260,7 +293,116 @@ class BenchmarkRunner:
                     logger.info(f"Progress: {completed}/{total}")
         
         collector.stop()
-        return collector.calculate()
+        return collector.calculate(), mismatches
+    
+    def _check_mismatch(
+        self,
+        test_case: TestCase,
+        mod_result: ModerationResult,
+        content_type: ContentType,
+    ) -> Optional[MismatchRecord]:
+        """
+        Check if the moderation result matches the expected ground truth.
+        
+        Args:
+            test_case: Test case with expected result
+            mod_result: Actual moderation result
+            content_type: Content type
+            
+        Returns:
+            MismatchRecord if mismatch, None otherwise
+        """
+        if not mod_result.success:
+            return None
+        
+        # Determine if results match
+        expected_is_risk = test_case.expected_risk != "正常"
+        actual_is_risk = mod_result.risk_level != RiskLevel.PASS
+        
+        # If both agree on risk/no-risk, no mismatch
+        if expected_is_risk == actual_is_risk:
+            return None
+        
+        # Create mismatch record
+        import json
+        raw_response_str = ""
+        if mod_result.raw_response:
+            try:
+                raw_response_str = json.dumps(mod_result.raw_response, ensure_ascii=False)
+            except:
+                raw_response_str = str(mod_result.raw_response)
+        
+        return MismatchRecord(
+            case_id=test_case.id,
+            content=test_case.content[:500] if len(test_case.content) > 500 else test_case.content,
+            content_type=content_type.value,
+            expected_risk=test_case.expected_risk,
+            actual_risk_level=mod_result.risk_level.value if mod_result.risk_level else "N/A",
+            actual_risk_label=mod_result.risk_label or "N/A",
+            risk_description=mod_result.raw_response.get("riskDescription", "") if mod_result.raw_response else "",
+            response_time_ms=mod_result.response_time * 1000 if mod_result.response_time else 0,
+            raw_response=raw_response_str,
+        )
+    
+    def _export_mismatches(self, result: BenchmarkResult) -> None:
+        """
+        Export mismatch records to CSV files.
+        
+        Args:
+            result: Benchmark result containing mismatches
+        """
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_dir = Config.REPORT_DIR
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Export text mismatches
+        if result.text_mismatches:
+            text_csv_path = output_dir / f"text_mismatches_{result.provider}_{timestamp}.csv"
+            self._write_mismatch_csv(text_csv_path, result.text_mismatches)
+            logger.info(f"Text mismatches exported to: {text_csv_path}")
+        
+        # Export image mismatches
+        if result.image_mismatches:
+            image_csv_path = output_dir / f"image_mismatches_{result.provider}_{timestamp}.csv"
+            self._write_mismatch_csv(image_csv_path, result.image_mismatches)
+            logger.info(f"Image mismatches exported to: {image_csv_path}")
+    
+    def _write_mismatch_csv(self, filepath: Path, mismatches: List[MismatchRecord]) -> None:
+        """
+        Write mismatch records to CSV file.
+        
+        Args:
+            filepath: Output CSV file path
+            mismatches: List of mismatch records
+        """
+        headers = [
+            "case_id",
+            "content",
+            "content_type",
+            "expected_risk",
+            "actual_risk_level",
+            "actual_risk_label",
+            "risk_description",
+            "response_time_ms",
+            "raw_response",
+        ]
+        
+        with open(filepath, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            
+            for m in mismatches:
+                writer.writerow([
+                    m.case_id,
+                    m.content,
+                    m.content_type,
+                    m.expected_risk,
+                    m.actual_risk_level,
+                    m.actual_risk_label,
+                    m.risk_description,
+                    f"{m.response_time_ms:.0f}",
+                    m.raw_response,
+                ])
     
     def _moderate_single(
         self,

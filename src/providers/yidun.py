@@ -283,32 +283,70 @@ class YidunProvider(BaseProvider):
     def _parse_image_response(self, data: Dict[str, Any], result: ModerationResult) -> None:
         """
         Parse Yidun image API response.
-        """
-        antispam = data.get("result", {}).get("antispam", {})
         
-        # Image API returns results in 'images' array
-        images = antispam.get("images", [])
-        if images:
-            img_result = images[0]
-            suggestion = img_result.get("suggestion", 0)
-            label = img_result.get("label", 0)
-            labels = img_result.get("labels", [])
-            
-            if suggestion == 0:
-                result.risk_level = RiskLevel.PASS
-                result.risk_label = "正常"
-                result.risk_labels = []
-            elif suggestion == 1:
-                result.risk_level = RiskLevel.REVIEW
-                result.risk_label = self.LABEL_MAPPING.get(label, "嫌疑")
-                result.risk_labels = [self.LABEL_MAPPING.get(l.get("label", 0), "嫌疑") for l in labels]
-            else:
-                result.risk_level = RiskLevel.REJECT
-                result.risk_label = self.LABEL_MAPPING.get(label, "违规")
-                result.risk_labels = [self.LABEL_MAPPING.get(l.get("label", 0), "违规") for l in labels]
-            
-            if labels:
-                result.confidence = labels[0].get("rate", 0.0)
+        Response structure (v5):
+        {
+            "code": 200,
+            "result": [
+                {
+                    "antispam": {
+                        "suggestion": 0/1/2,
+                        "label": 100/200/...,
+                        "labels": [...]
+                    }
+                }
+            ]
+        }
+        """
+        api_result = data.get("result", [])
+        
+        # Image API returns result as a list
+        if isinstance(api_result, list) and len(api_result) > 0:
+            img_result = api_result[0]
+            antispam = img_result.get("antispam", {})
+        elif isinstance(api_result, dict):
+            # Fallback for dict format
+            antispam = api_result.get("antispam", {})
+            if not antispam:
+                # Try images array format
+                images = api_result.get("images", [])
+                if images:
+                    antispam = images[0]
         else:
+            antispam = {}
+        
+        suggestion = antispam.get("suggestion", 0)
+        label = antispam.get("label", 0)
+        labels = antispam.get("labels", [])
+        
+        if suggestion == 0:
             result.risk_level = RiskLevel.PASS
             result.risk_label = "正常"
+            result.risk_labels = []
+        elif suggestion == 1:
+            result.risk_level = RiskLevel.REVIEW
+            result.risk_label = self.LABEL_MAPPING.get(label, "嫌疑")
+            result.risk_labels = self._extract_labels(labels)
+        else:
+            result.risk_level = RiskLevel.REJECT
+            result.risk_label = self.LABEL_MAPPING.get(label, "违规")
+            result.risk_labels = self._extract_labels(labels)
+        
+        if labels and isinstance(labels, list) and len(labels) > 0:
+            first_label = labels[0]
+            if isinstance(first_label, dict):
+                result.confidence = first_label.get("rate", 0.0)
+    
+    def _extract_labels(self, labels: Any) -> List[str]:
+        """Extract label names from labels array safely."""
+        if not labels or not isinstance(labels, list):
+            return []
+        
+        extracted = []
+        for l in labels:
+            if isinstance(l, dict):
+                label_code = l.get("label", 0)
+                extracted.append(self.LABEL_MAPPING.get(label_code, str(label_code)))
+            elif isinstance(l, (int, str)):
+                extracted.append(self.LABEL_MAPPING.get(int(l), str(l)))
+        return extracted

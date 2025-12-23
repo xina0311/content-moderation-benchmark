@@ -3,7 +3,7 @@
 *.env.local
 
 # Test data directory (contains sensitive test content)
-data/
+/data/
 
 # Python
 __pycache__/

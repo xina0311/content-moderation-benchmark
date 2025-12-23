@@ -19,7 +19,7 @@ click>=8.1.0         # CLI framework
 # asyncio
 
 # Provider SDKs (optional, only needed for specific providers)
-# volcengine-python-sdk>=1.0.0  # For Huoshan/Volcengine LLM Shield
+volcengine-python-sdk>=1.0.0  # For Huoshan/Volcengine LLM Shield
 
 # Testing
 pytest>=7.0.0

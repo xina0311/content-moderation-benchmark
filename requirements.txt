@@ -1,0 +1,29 @@
+# Content Moderation Benchmark Dependencies
+
+# HTTP requests
+requests>=2.28.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Data processing
+openpyxl>=3.1.0      # Excel files
+pandas>=2.0.0        # Data analysis (optional but useful)
+
+# CLI and output
+rich>=13.0.0         # Beautiful terminal output
+click>=8.1.0         # CLI framework
+
+# Async support (optional, for future async providers)
+# aiohttp>=3.8.0
+# asyncio
+
+# Provider SDKs (optional, only needed for specific providers)
+# volcengine-python-sdk>=1.0.0  # For Huoshan/Volcengine LLM Shield
+
+# Testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
+
+# Type checking (development)
+# mypy>=1.0.0

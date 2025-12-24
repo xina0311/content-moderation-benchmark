@@ -183,13 +183,19 @@ class JunTongProvider(BaseProvider):
             try:
                 start_time = time.time()
                 
-                # Log request details at DEBUG level
+                # Log request details at DEBUG level (hide base64 content)
                 logger.debug(f"\n{'='*60}")
                 logger.debug(f">>> API REQUEST")
                 logger.debug(f"{'='*60}")
                 logger.debug(f"URL: {url}")
                 logger.debug(f"Content Type: {content_type.value}")
-                logger.debug(f"Payload:\n{json.dumps(payload, ensure_ascii=False, indent=2)}")
+                
+                # Create a sanitized payload for logging (hide base64)
+                log_payload = payload.copy()
+                if log_payload.get("upload_type") == "BASE64" and "image" in log_payload:
+                    img_len = len(log_payload["image"])
+                    log_payload["image"] = f"[BASE64 DATA: {img_len} chars]"
+                logger.debug(f"Payload:\n{json.dumps(log_payload, ensure_ascii=False, indent=2)}")
                 
                 response = requests.post(
                     url,

@@ -1,9 +1,15 @@
 """
 Dataset configurations for different vendors.
 Each vendor has different data formats and column names.
+
+Features:
+- Proportional sampling from multiple files/directories
+- Random shuffle for single-file datasets
+- Consistent sampling strategy across all vendors
 """
 
 import base64
+import random
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -116,15 +122,21 @@ class VendorDataLoader:
     """
     Load test data for a specific vendor's dataset.
     Handles different data formats and column mappings.
+    
+    Sampling Strategy:
+    - Single file: Random shuffle before sampling
+    - Multiple files: Proportional sampling from each file
+    - Multiple directories: Proportional sampling from each directory
     """
     
-    def __init__(self, vendor: str, base_path: str = "."):
+    def __init__(self, vendor: str, base_path: str = ".", seed: int = 42):
         """
         Initialize vendor data loader.
         
         Args:
             vendor: Vendor name (shumei, yidun, juntong, huoshan)
             base_path: Base path for data files
+            seed: Random seed for reproducible sampling
         """
         if vendor not in DATASET_CONFIGS:
             raise ValueError(f"Unknown vendor: {vendor}. Available: {list(DATASET_CONFIGS.keys())}")
@@ -132,92 +144,297 @@ class VendorDataLoader:
         self.vendor = vendor
         self.config = DATASET_CONFIGS[vendor]
         self.base_path = Path(base_path)
+        self.seed = seed
+        
+        # Set random seed for reproducibility
+        random.seed(seed)
         
         logger.info(f"VendorDataLoader initialized: {self.config.display_name}")
     
-    def load_text_cases(self, limit: Optional[int] = None) -> List[TestCase]:
+    def load_text_cases(self, limit: Optional[int] = None, shuffle: bool = True) -> List[TestCase]:
         """
-        Load text test cases for this vendor.
+        Load text test cases for this vendor with proportional sampling.
         
         Args:
             limit: Maximum number of cases to load
+            shuffle: Whether to shuffle data (default True)
             
         Returns:
             List of TestCase objects
         """
+        file_configs = self.config.text_files
+        
+        if len(file_configs) == 1:
+            # Single file: load all, shuffle, then limit
+            cases = self._load_single_file_cases(
+                file_configs[0],
+                ContentType.TEXT,
+                shuffle=shuffle,
+            )
+            if limit and len(cases) > limit:
+                cases = cases[:limit]
+        else:
+            # Multiple files: proportional sampling
+            cases = self._load_proportional_cases(
+                file_configs,
+                ContentType.TEXT,
+                limit=limit,
+                shuffle=shuffle,
+            )
+        
+        logger.info(f"Loaded {len(cases)} text cases for {self.vendor}")
+        return cases
+    
+    def load_image_cases(self, limit: Optional[int] = None, shuffle: bool = True) -> List[TestCase]:
+        """
+        Load image test cases for this vendor with proportional sampling.
+        
+        Args:
+            limit: Maximum number of cases to load
+            shuffle: Whether to shuffle data (default True)
+            
+        Returns:
+            List of TestCase objects
+        """
+        file_configs = self.config.image_files
+        
+        # Separate Excel files and directories
+        excel_configs = [c for c in file_configs if c.get("content_type") != "local_dir"]
+        dir_configs = [c for c in file_configs if c.get("content_type") == "local_dir"]
+        
         cases = []
         
-        for file_config in self.config.text_files:
+        if excel_configs and not dir_configs:
+            # Only Excel files
+            if len(excel_configs) == 1:
+                cases = self._load_single_file_cases(
+                    excel_configs[0],
+                    ContentType.IMAGE,
+                    shuffle=shuffle,
+                )
+                if limit and len(cases) > limit:
+                    cases = cases[:limit]
+            else:
+                cases = self._load_proportional_cases(
+                    excel_configs,
+                    ContentType.IMAGE,
+                    limit=limit,
+                    shuffle=shuffle,
+                )
+        elif dir_configs and not excel_configs:
+            # Only directories
+            if len(dir_configs) == 1:
+                cases = self._load_single_dir_images(
+                    dir_configs[0],
+                    shuffle=shuffle,
+                )
+                if limit and len(cases) > limit:
+                    cases = cases[:limit]
+            else:
+                cases = self._load_proportional_dir_images(
+                    dir_configs,
+                    limit=limit,
+                    shuffle=shuffle,
+                )
+        else:
+            # Mixed: load all and combine proportionally
+            all_cases = []
+            for config in file_configs:
+                if config.get("content_type") == "local_dir":
+                    file_cases = self._load_single_dir_images(config, shuffle=False)
+                else:
+                    file_cases = self._load_single_file_cases(config, ContentType.IMAGE, shuffle=False)
+                all_cases.append((config, file_cases))
+            
+            if shuffle:
+                cases = self._proportional_sample(all_cases, limit)
+            else:
+                for _, fc in all_cases:
+                    cases.extend(fc)
+                if limit:
+                    cases = cases[:limit]
+        
+        logger.info(f"Loaded {len(cases)} image cases for {self.vendor}")
+        return cases
+    
+    def _load_single_file_cases(
+        self,
+        file_config: Dict[str, Any],
+        content_type: ContentType,
+        shuffle: bool = True,
+    ) -> List[TestCase]:
+        """Load cases from a single Excel file with optional shuffle."""
+        file_path = self.base_path / file_config["path"]
+        
+        if not file_path.exists():
+            logger.warning(f"File not found: {file_path}")
+            return []
+        
+        cases = self._load_excel_cases(
+            file_path=file_path,
+            sheet_name=file_config.get("sheet"),
+            columns=file_config.get("columns", {}),
+            content_type=content_type,
+            default_risk=file_config.get("default_risk", "正常"),
+            default_category=file_config.get("default_category", ""),
+            limit=None,  # Load all first
+        )
+        
+        if shuffle and cases:
+            random.shuffle(cases)
+            logger.debug(f"Shuffled {len(cases)} cases from {file_path.name}")
+        
+        return cases
+    
+    def _load_proportional_cases(
+        self,
+        file_configs: List[Dict[str, Any]],
+        content_type: ContentType,
+        limit: Optional[int],
+        shuffle: bool = True,
+    ) -> List[TestCase]:
+        """
+        Load cases from multiple files with proportional sampling.
+        
+        Example: If file1 has 2000 rows and file2 has 18000 rows,
+        and limit=200, then sample 20 from file1 and 180 from file2.
+        """
+        # First, count total rows in each file
+        file_cases_list = []
+        total_count = 0
+        
+        for file_config in file_configs:
             file_path = self.base_path / file_config["path"]
             
             if not file_path.exists():
                 logger.warning(f"File not found: {file_path}")
                 continue
             
-            file_cases = self._load_excel_cases(
+            cases = self._load_excel_cases(
                 file_path=file_path,
                 sheet_name=file_config.get("sheet"),
                 columns=file_config.get("columns", {}),
-                content_type=ContentType.TEXT,
+                content_type=content_type,
                 default_risk=file_config.get("default_risk", "正常"),
                 default_category=file_config.get("default_category", ""),
-                limit=limit - len(cases) if limit else None,
+                limit=None,  # Load all
             )
-            cases.extend(file_cases)
             
-            if limit and len(cases) >= limit:
-                break
+            if shuffle and cases:
+                random.shuffle(cases)
+            
+            file_cases_list.append((file_config, cases))
+            total_count += len(cases)
         
-        logger.info(f"Loaded {len(cases)} text cases for {self.vendor}")
-        return cases[:limit] if limit else cases
+        if not file_cases_list:
+            return []
+        
+        # Calculate proportional samples
+        return self._proportional_sample(file_cases_list, limit)
     
-    def load_image_cases(self, limit: Optional[int] = None) -> List[TestCase]:
+    def _proportional_sample(
+        self,
+        file_cases_list: List[tuple],
+        limit: Optional[int],
+    ) -> List[TestCase]:
         """
-        Load image test cases for this vendor.
+        Proportionally sample from multiple case lists.
         
         Args:
-            limit: Maximum number of cases to load
+            file_cases_list: List of (config, cases) tuples
+            limit: Total number to sample
             
         Returns:
-            List of TestCase objects
+            Combined and shuffled list of cases
         """
-        cases = []
+        total_count = sum(len(cases) for _, cases in file_cases_list)
         
-        for file_config in self.config.image_files:
-            content_type_str = file_config.get("content_type", "url")
-            file_path = self.base_path / file_config["path"]
+        if not limit or limit >= total_count:
+            # No limit or limit exceeds total - return all
+            all_cases = []
+            for _, cases in file_cases_list:
+                all_cases.extend(cases)
+            random.shuffle(all_cases)
+            return all_cases
+        
+        # Calculate proportional samples
+        sampled_cases = []
+        remaining_limit = limit
+        
+        for i, (config, cases) in enumerate(file_cases_list):
+            if not cases:
+                continue
             
-            if content_type_str == "local_dir":
-                # Load images from directory
-                file_cases = self._load_local_images(
-                    dir_path=file_path,
-                    default_risk=file_config.get("default_risk", "正常"),
-                    default_category=file_config.get("default_category", ""),
-                    limit=limit - len(cases) if limit else None,
-                )
+            proportion = len(cases) / total_count
+            sample_size = int(limit * proportion)
+            
+            # Ensure at least 1 sample if there are cases
+            if sample_size == 0 and cases:
+                sample_size = 1
+            
+            # For last file, use remaining limit to handle rounding
+            if i == len(file_cases_list) - 1:
+                sample_size = min(remaining_limit, len(cases))
             else:
-                # Load from Excel with URLs
-                if not file_path.exists():
-                    logger.warning(f"File not found: {file_path}")
-                    continue
-                
-                file_cases = self._load_excel_cases(
-                    file_path=file_path,
-                    sheet_name=file_config.get("sheet"),
-                    columns=file_config.get("columns", {}),
-                    content_type=ContentType.IMAGE,
-                    default_risk=file_config.get("default_risk", "正常"),
-                    default_category=file_config.get("default_category", ""),
-                    limit=limit - len(cases) if limit else None,
-                )
+                sample_size = min(sample_size, len(cases), remaining_limit)
             
-            cases.extend(file_cases)
+            sampled = cases[:sample_size]
+            sampled_cases.extend(sampled)
+            remaining_limit -= len(sampled)
             
-            if limit and len(cases) >= limit:
-                break
+            source = config.get("path", config.get("default_risk", "unknown"))
+            logger.info(f"Sampled {len(sampled)}/{len(cases)} ({len(sampled)/len(cases)*100:.1f}%) from {source}")
         
-        logger.info(f"Loaded {len(cases)} image cases for {self.vendor}")
-        return cases[:limit] if limit else cases
+        # Final shuffle to mix samples from different sources
+        random.shuffle(sampled_cases)
+        
+        return sampled_cases
+    
+    def _load_single_dir_images(
+        self,
+        config: Dict[str, Any],
+        shuffle: bool = True,
+    ) -> List[TestCase]:
+        """Load images from a single directory."""
+        dir_path = self.base_path / config["path"]
+        
+        cases = self._load_local_images(
+            dir_path=dir_path,
+            default_risk=config.get("default_risk", "正常"),
+            default_category=config.get("default_category", ""),
+            limit=None,
+        )
+        
+        if shuffle and cases:
+            random.shuffle(cases)
+        
+        return cases
+    
+    def _load_proportional_dir_images(
+        self,
+        dir_configs: List[Dict[str, Any]],
+        limit: Optional[int],
+        shuffle: bool = True,
+    ) -> List[TestCase]:
+        """Load images from multiple directories with proportional sampling."""
+        dir_cases_list = []
+        
+        for config in dir_configs:
+            dir_path = self.base_path / config["path"]
+            
+            cases = self._load_local_images(
+                dir_path=dir_path,
+                default_risk=config.get("default_risk", "正常"),
+                default_category=config.get("default_category", ""),
+                limit=None,
+            )
+            
+            if shuffle and cases:
+                random.shuffle(cases)
+            
+            dir_cases_list.append((config, cases))
+        
+        return self._proportional_sample(dir_cases_list, limit)
     
     def _load_excel_cases(
         self,

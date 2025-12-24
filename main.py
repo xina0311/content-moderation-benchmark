@@ -23,6 +23,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from src.config import Config
 from src.providers import get_provider, list_providers, PROVIDERS
 from src.data.loader import DataLoader, create_sample_data
+from src.data.datasets import VendorDataLoader, DATASET_CONFIGS, list_datasets, get_dataset_info
 from src.benchmark.runner import BenchmarkRunner, MultiProviderRunner
 from src.benchmark.reporter import Reporter
 
@@ -332,6 +333,148 @@ def create_sample(output, format):
     create_sample_data(output, format)
     console.print(f"[green]✅ Sample data created: {output}[/green]")
     console.print("\nEdit this file to add your test cases.")
+
+
+@cli.command('list-datasets')
+def list_datasets_cmd():
+    """List available vendor datasets."""
+    console.print("\n[bold]Available Vendor Datasets:[/bold]\n")
+    
+    table = Table()
+    table.add_column("Vendor", style="cyan")
+    table.add_column("Display Name")
+    table.add_column("Description")
+    table.add_column("Text Files")
+    table.add_column("Image Files")
+    
+    for name, config in DATASET_CONFIGS.items():
+        text_count = len(config.text_files)
+        image_count = len(config.image_files)
+        table.add_row(
+            name,
+            config.display_name,
+            config.description[:50] + "..." if len(config.description) > 50 else config.description,
+            str(text_count),
+            str(image_count),
+        )
+    
+    console.print(table)
+    console.print("\nUse: python main.py run-dataset -p <provider> -s <dataset> -l <limit>")
+
+
+@cli.command('run-dataset')
+@click.option('--provider', '-p', required=True, help='Provider name (e.g., shumei, yidun, juntong)')
+@click.option('--dataset', '-s', required=True, help='Dataset name (e.g., shumei, yidun, juntong, huoshan)')
+@click.option('--limit', '-l', default=100, type=int, help='Limit number of test cases per type')
+@click.option('--text/--no-text', default=True, help='Run text moderation tests')
+@click.option('--image/--no-image', default=True, help='Run image moderation tests')
+@click.option('--output', '-o', default=None, help='Output report filename')
+def run_dataset(provider, dataset, limit, text, image, output):
+    """
+    Run benchmark using a vendor's dataset.
+    
+    This command loads test data from pre-configured vendor datasets,
+    making it easy to test any provider against any vendor's test data.
+    
+    Examples:
+        # Test shumei provider with shumei dataset
+        python main.py run-dataset -p shumei -s shumei -l 100
+        
+        # Test yidun provider with juntong dataset  
+        python main.py run-dataset -p yidun -s juntong -l 200
+        
+        # Test all providers with the same dataset
+        python main.py run-dataset -p shumei -s yidun -l 500
+    """
+    console.print(f"\n[bold blue]Content Moderation Benchmark (Dataset Mode)[/bold blue]")
+    console.print(f"Provider: [cyan]{provider}[/cyan]")
+    console.print(f"Dataset: [cyan]{dataset}[/cyan]")
+    console.print(f"Limit: [cyan]{limit}[/cyan] per type")
+    console.print("")
+    
+    # Validate dataset
+    if dataset not in DATASET_CONFIGS:
+        console.print(f"[red]Error: Unknown dataset '{dataset}'[/red]")
+        console.print(f"Available datasets: {', '.join(DATASET_CONFIGS.keys())}")
+        sys.exit(1)
+    
+    dataset_config = DATASET_CONFIGS[dataset]
+    console.print(f"📁 Dataset: {dataset_config.display_name}")
+    console.print(f"   {dataset_config.description}")
+    
+    # Get provider
+    try:
+        provider_instance = get_provider(provider)
+        console.print(f"✅ Provider initialized: {provider_instance.display_name}")
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        console.print(f"Available providers: {', '.join(list_providers())}")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Error initializing provider: {e}[/red]")
+        console.print("Make sure your .env file is configured correctly.")
+        sys.exit(1)
+    
+    # Load data using VendorDataLoader
+    console.print(f"\n[bold]Loading test data...[/bold]")
+    
+    try:
+        data_loader = VendorDataLoader(dataset)
+    except Exception as e:
+        console.print(f"[red]Error loading dataset: {e}[/red]")
+        sys.exit(1)
+    
+    text_cases = []
+    image_cases = []
+    
+    if text:
+        text_cases = data_loader.load_text_cases(limit=limit)
+        console.print(f"  📝 Text cases: {len(text_cases)}")
+    
+    if image:
+        image_cases = data_loader.load_image_cases(limit=limit)
+        console.print(f"  🖼️  Image cases: {len(image_cases)}")
+    
+    if not text_cases and not image_cases:
+        console.print("[yellow]⚠️  No test cases loaded. Check dataset configuration.[/yellow]")
+        sys.exit(1)
+    
+    # Run benchmark
+    runner = BenchmarkRunner(provider_instance)
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Running benchmark...", total=None)
+        
+        result = runner.run(
+            text_cases=text_cases if text else None,
+            image_cases=image_cases if image else None,
+            test_text=text and bool(text_cases),
+            test_image=image and bool(image_cases),
+        )
+        
+        progress.update(task, completed=True)
+    
+    # Generate reports
+    Config.ensure_directories()
+    reporter = Reporter()
+    
+    # Add dataset info to result
+    result.metadata = result.metadata or {}
+    result.metadata['dataset'] = dataset
+    result.metadata['dataset_name'] = dataset_config.display_name
+    
+    md_path = reporter.generate_markdown(result, output)
+    console.print(f"📄 Markdown report: [green]{md_path}[/green]")
+    
+    json_path = reporter.generate_json(result)
+    console.print(f"📊 JSON results: [green]{json_path}[/green]")
+    
+    # Print summary
+    reporter.print_summary(result)
 
 
 @cli.command('init')

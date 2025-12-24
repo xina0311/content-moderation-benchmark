@@ -83,19 +83,59 @@ class JunTongProvider(BaseProvider):
         """
         Moderate image content using JunTong API.
         
+        Supports both URL and local file paths:
+        - If image_url starts with 'http', uses URL upload
+        - Otherwise, reads local file and uses Base64 upload
+        
         Args:
-            image_url: URL of the image to moderate
+            image_url: URL or local path of the image to moderate
             
         Returns:
             ModerationResult with risk assessment
         """
         url = f"{self.config['base_url']}{self.IMAGE_ENDPOINT}"
         
-        payload = {
-            "image": image_url,
-            "upload_type": "URL",
-            "role": "user",
-        }
+        # Check if it's a URL or local file path
+        if image_url.startswith('http://') or image_url.startswith('https://'):
+            # URL-based upload
+            payload = {
+                "image": image_url,
+                "upload_type": "URL",
+                "role": "user",
+            }
+        else:
+            # Local file - convert to Base64
+            import base64
+            from pathlib import Path
+            
+            img_path = Path(image_url)
+            if not img_path.exists():
+                result = ModerationResult(
+                    provider=self.name,
+                    content_type=ContentType.IMAGE,
+                )
+                result.error = f"Image file not found: {image_url}"
+                result.success = False
+                return result
+            
+            try:
+                with open(img_path, 'rb') as img_file:
+                    img_data = img_file.read()
+                    img_base64 = base64.b64encode(img_data).decode('utf-8')
+            except Exception as e:
+                result = ModerationResult(
+                    provider=self.name,
+                    content_type=ContentType.IMAGE,
+                )
+                result.error = f"Failed to read image: {e}"
+                result.success = False
+                return result
+            
+            payload = {
+                "image": img_base64,
+                "upload_type": "BASE64",
+                "role": "user",
+            }
         
         return self._call_api(
             url=url,

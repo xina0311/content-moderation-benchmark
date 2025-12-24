@@ -5,6 +5,9 @@
 # Test data directory (contains sensitive test content)
 /data/
 
+# Temporary files
+temp/
+
 # Python
 __pycache__/
 *.py[cod]

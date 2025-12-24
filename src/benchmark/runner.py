@@ -57,6 +57,7 @@ class BenchmarkResult:
     detailed_results: List[Dict[str, Any]] = field(default_factory=list)
     text_mismatches: List[MismatchRecord] = field(default_factory=list)
     image_mismatches: List[MismatchRecord] = field(default_factory=list)
+    metadata: Optional[Dict[str, Any]] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""

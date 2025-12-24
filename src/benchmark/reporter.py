@@ -90,6 +90,24 @@ def get_machine_info() -> Dict[str, str]:
     return info
 
 
+def get_report_subdir_name() -> str:
+    """
+    Generate report subdirectory name based on date, region and IP.
+    
+    Format: YYYYMMDD_region_ip
+    Example: 20251224_cn-north-1_202.101.0.16
+    
+    Returns:
+        Subdirectory name string
+    """
+    machine_info = get_machine_info()
+    date_str = datetime.now().strftime("%Y%m%d")
+    region = machine_info["region"].replace("_", "-")
+    ip = machine_info["ip_address"].replace(".", ".")  # Keep dots for IP
+    
+    return f"{date_str}_{region}_{ip}"
+
+
 class Reporter:
     """
     Generate benchmark reports in various formats.
@@ -99,6 +117,9 @@ class Reporter:
         - JSON data export
         - Console output
         - Multi-provider comparison reports
+    
+    Reports are organized by date, region and IP address:
+        reports/YYYYMMDD_region_ip/
     
     Example:
         reporter = Reporter()
@@ -111,10 +132,17 @@ class Reporter:
         Initialize reporter.
         
         Args:
-            output_dir: Directory for output files
+            output_dir: Base directory for output files (default: Config.REPORT_DIR)
         """
-        self.output_dir = output_dir or Config.REPORT_DIR
+        base_dir = output_dir or Config.REPORT_DIR
+        
+        # Create subdirectory with date_region_ip format
+        subdir_name = get_report_subdir_name()
+        self.output_dir = base_dir / subdir_name
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Cache machine info for this reporter instance
+        self._machine_info = get_machine_info()
     
     def generate_markdown(
         self,
@@ -139,8 +167,8 @@ class Reporter:
         
         output_path = self.output_dir / filename
         
-        # Get machine info
-        machine_info = get_machine_info()
+        # Use cached machine info
+        machine_info = self._machine_info
         
         lines = []
         lines.append(f"# 内容审核性能测试报告")
@@ -285,8 +313,8 @@ class Reporter:
         
         output_path = self.output_dir / filename
         
-        # Get machine info
-        machine_info = get_machine_info()
+        # Use cached machine info
+        machine_info = self._machine_info
         
         data = {
             "provider": result.provider,

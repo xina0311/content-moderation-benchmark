@@ -15,7 +15,7 @@ from ..providers.base import BaseProvider, ContentType, ModerationResult, RiskLe
 from ..data.loader import TestCase, DataLoader
 from ..config import Config
 from .metrics import MetricsCollector, BenchmarkMetrics
-from .reporter import get_report_subdir_name
+from .utils import get_report_subdir_name
 
 logger = logging.getLogger(__name__)
 

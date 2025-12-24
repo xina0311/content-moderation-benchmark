@@ -15,6 +15,7 @@ from ..providers.base import BaseProvider, ContentType, ModerationResult, RiskLe
 from ..data.loader import TestCase, DataLoader
 from ..config import Config
 from .metrics import MetricsCollector, BenchmarkMetrics
+from .reporter import get_report_subdir_name
 
 logger = logging.getLogger(__name__)
 
@@ -353,7 +354,10 @@ class BenchmarkRunner:
             result: Benchmark result containing mismatches
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_dir = Config.REPORT_DIR
+        
+        # Use same subdirectory structure as Reporter (YYYYMMDD_region_ip)
+        subdir_name = get_report_subdir_name()
+        output_dir = Config.REPORT_DIR / subdir_name
         output_dir.mkdir(parents=True, exist_ok=True)
         
         # Export text mismatches

@@ -6,9 +6,11 @@ API Documentation: https://support.dun.163.com/documents/588434200783982592
 import time
 import json
 import hashlib
+import base64
 import logging
 import requests
 import uuid
+from pathlib import Path
 from typing import Dict, Any, List
 
 from .base import (
@@ -126,16 +128,19 @@ class YidunProvider(BaseProvider):
             content_type=ContentType.TEXT,
         )
     
-    def moderate_image(self, image_url: str, **kwargs) -> ModerationResult:
+    def moderate_image(self, image_source: str, **kwargs) -> ModerationResult:
         """
         Moderate image content using Yidun API.
         
         Args:
-            image_url: URL of the image to moderate
+            image_source: URL or local file path of the image to moderate
             
         Returns:
             ModerationResult with risk assessment
         """
+        # Prepare image data (type: 1=URL, 2=BASE64)
+        img_type, img_data = self._prepare_image_data(image_source)
+        
         params = {
             "secretId": self.config["secret_id"],
             "businessId": self.config.get("business_id_image", self.config.get("business_id", "")),
@@ -143,7 +148,7 @@ class YidunProvider(BaseProvider):
             "timestamp": str(int(time.time() * 1000)),
             "nonce": str(uuid.uuid4().hex),
             "dataId": str(uuid.uuid4().hex[:16]),
-            "images": json.dumps([{"name": image_url, "type": 1, "data": image_url}]),
+            "images": json.dumps([{"name": image_source, "type": img_type, "data": img_data}]),
         }
         
         # Generate signature
@@ -154,6 +159,37 @@ class YidunProvider(BaseProvider):
             params=params,
             content_type=ContentType.IMAGE,
         )
+    
+    def _prepare_image_data(self, image_source: str) -> tuple:
+        """
+        Prepare image data for API request.
+        
+        Args:
+            image_source: URL or local file path
+            
+        Returns:
+            Tuple of (type, data) where type is 1 for URL, 2 for BASE64
+        """
+        # Check if it's a URL
+        if image_source.startswith(('http://', 'https://')):
+            return (1, image_source)
+        
+        # Check if it's a local file
+        path = Path(image_source)
+        if path.exists() and path.is_file():
+            try:
+                with open(path, 'rb') as f:
+                    img_bytes = f.read()
+                    img_base64 = base64.b64encode(img_bytes).decode('utf-8')
+                    logger.debug(f"Converted local image to BASE64: {path.name} ({len(img_bytes)} bytes)")
+                    return (2, img_base64)
+            except Exception as e:
+                logger.error(f"Failed to read local image {image_source}: {e}")
+                # Fall back to treating it as URL
+                return (1, image_source)
+        
+        # Assume it's a URL
+        return (1, image_source)
     
     def _call_api(
         self, 

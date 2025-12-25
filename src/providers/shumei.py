@@ -5,8 +5,10 @@ API Documentation: https://www.ishumei.com/help/documents.html
 
 import time
 import json
+import base64
 import logging
 import requests
+from pathlib import Path
 from typing import Dict, Any, List
 
 from .base import (
@@ -92,12 +94,12 @@ class ShumeiProvider(BaseProvider):
             content_type=ContentType.TEXT,
         )
     
-    def moderate_image(self, image_url: str, **kwargs) -> ModerationResult:
+    def moderate_image(self, image_source: str, **kwargs) -> ModerationResult:
         """
         Moderate image content using Shumei API.
         
         Args:
-            image_url: URL of the image to moderate
+            image_source: URL or local file path of the image to moderate
             token_id: User identifier (optional)
             event_id: Event type (optional, default: 'input')
             
@@ -107,13 +109,16 @@ class ShumeiProvider(BaseProvider):
         token_id = kwargs.get("token_id", "benchmark_user")
         event_id = kwargs.get("event_id", self.IMAGE_EVENT_ID)
         
+        # Check if it's a local file path
+        img_data = self._prepare_image_data(image_source)
+        
         payload = {
             "accessKey": self.config["access_key"],
             "appId": self.config["app_id"],
             "eventId": event_id,
             "type": self.IMAGE_TYPE,
             "data": {
-                "img": image_url,
+                "img": img_data,
                 "tokenId": token_id,
             }
         }
@@ -123,6 +128,37 @@ class ShumeiProvider(BaseProvider):
             payload=payload,
             content_type=ContentType.IMAGE,
         )
+    
+    def _prepare_image_data(self, image_source: str) -> str:
+        """
+        Prepare image data for API request.
+        
+        Args:
+            image_source: URL or local file path
+            
+        Returns:
+            URL string or BASE64 encoded image data
+        """
+        # Check if it's a URL
+        if image_source.startswith(('http://', 'https://')):
+            return image_source
+        
+        # Check if it's a local file
+        path = Path(image_source)
+        if path.exists() and path.is_file():
+            try:
+                with open(path, 'rb') as f:
+                    img_bytes = f.read()
+                    img_base64 = base64.b64encode(img_bytes).decode('utf-8')
+                    logger.debug(f"Converted local image to BASE64: {path.name} ({len(img_bytes)} bytes)")
+                    return img_base64
+            except Exception as e:
+                logger.error(f"Failed to read local image {image_source}: {e}")
+                # Fall back to treating it as URL
+                return image_source
+        
+        # Assume it's a URL or already BASE64
+        return image_source
     
     def _call_api(
         self, 

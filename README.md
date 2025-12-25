@@ -1,6 +1,6 @@
 # Content Moderation Benchmark
 
-A comprehensive framework for benchmarking content moderation API providers. Compare performance, accuracy, and reliability across different vendors like Shumei (数美), Bytedance (字节), NetEase Yidun (网易易盾), Juntong (君同), and more.
+A comprehensive framework for benchmarking content moderation API providers. Compare performance, accuracy, and reliability across different vendors like Shumei (数美), Huoshan/Volcengine (火山引擎), NetEase Yidun (网易易盾), Juntong (君同), and more.
 
 ## Features
 
@@ -10,15 +10,16 @@ A comprehensive framework for benchmarking content moderation API providers. Com
 - 📝 **Multiple Data Formats**: Support for Excel, JSON, and CSV test data
 - 📋 **Detailed Reports**: Generate Markdown and JSON reports
 - 🔄 **Provider Comparison**: Side-by-side comparison of multiple providers
+- ⏰ **Scheduled Benchmarking**: Support for automated scheduled benchmark runs
 
 ## Supported Providers
 
-| Provider | Status | Text | Image |
-|----------|--------|------|-------|
-| Shumei (数美科技) | ✅ Ready | ✅ | ✅ |
-| Bytedance (字节跳动) | 🚧 Template | - | - |
-| NetEase Yidun (网易易盾) | 🚧 Template | - | - |
-| Juntong (君同) | 🚧 Template | - | - |
+| Provider | Module | Status | Text | Image |
+|----------|--------|--------|------|-------|
+| 数美科技 (Shumei) | `shumei` | ✅ Ready | ✅ | ✅ |
+| 火山引擎 (Huoshan/Volcengine) | `huoshan` | ✅ Ready | ✅ | ❌ (LLM Shield不支持) |
+| 网易易盾 (NetEase Yidun) | `yidun` | ✅ Ready | ✅ | ✅ |
+| 君同未来 (Juntong) | `juntong` | ✅ Ready | ✅ | ✅ |
 
 ## Quick Start
 
@@ -165,33 +166,42 @@ text_002,敏感内容,涉政,黑样本
 
 ```
 content-moderation-benchmark/
-├── main.py                 # CLI entry point
-├── requirements.txt        # Python dependencies
-├── .env.example           # Environment template
-├── .gitignore             # Git ignore rules
-├── README.md              # This file
+├── main.py                  # CLI主入口
+├── scheduled_benchmark.py   # 定时基准测试脚本
+├── requirements.txt         # Python依赖
+├── .env.example            # 环境变量模板
+├── .gitignore              # Git忽略规则
+├── README.md               # 本文档
 │
 ├── src/
 │   ├── __init__.py
-│   ├── config.py          # Configuration management
+│   ├── config.py           # 配置管理
 │   │
-│   ├── providers/         # Provider implementations
+│   ├── providers/          # 服务商实现
+│   │   ├── __init__.py     # Provider注册
+│   │   ├── base.py         # 抽象基类
+│   │   ├── shumei.py       # 数美科技
+│   │   ├── huoshan.py      # 火山引擎 (LLM Shield)
+│   │   ├── yidun.py        # 网易易盾
+│   │   └── juntong.py      # 君同未来
+│   │
+│   ├── data/               # 数据加载
 │   │   ├── __init__.py
-│   │   ├── base.py        # Abstract base class
-│   │   └── shumei.py      # Shumei provider
+│   │   ├── loader.py       # 多格式数据加载器
+│   │   └── datasets.py     # 数据集管理
 │   │
-│   ├── data/              # Data loading
-│   │   ├── __init__.py
-│   │   └── loader.py      # Multi-format data loader
-│   │
-│   └── benchmark/         # Benchmark execution
+│   └── benchmark/          # 基准测试执行
 │       ├── __init__.py
-│       ├── runner.py      # Benchmark runner
-│       ├── metrics.py     # Metrics collection
-│       └── reporter.py    # Report generation
+│       ├── runner.py       # 测试运行器
+│       ├── metrics.py      # 指标收集
+│       ├── reporter.py     # 报告生成
+│       └── utils.py        # 工具函数
 │
-├── output/                # Test outputs (gitignored)
-└── reports/               # Generated reports (gitignored)
+├── data/                   # 测试数据目录
+├── docs/                   # 文档目录
+│   └── EC2_DEPLOYMENT.md   # EC2部署指南
+├── output/                 # 测试输出 (gitignored)
+└── reports/                # 生成的报告 (gitignored)
 ```
 
 ## Adding a New Provider
@@ -200,7 +210,8 @@ content-moderation-benchmark/
 
 ```python
 # src/providers/myprovider.py
-from .base import BaseProvider, ModerationResult, ContentType
+import os
+from .base import BaseProvider, ModerationResult, ContentType, RiskLevel, ConfigurationError
 from ..config import Config
 
 class MyProvider(BaseProvider):
@@ -213,27 +224,49 @@ class MyProvider(BaseProvider):
             # ... other config
         }
     
+    def _validate_config(self) -> None:
+        if not self.config.get("api_key"):
+            raise ConfigurationError("MYPROVIDER_API_KEY is required.")
+    
     def moderate_text(self, text: str, **kwargs) -> ModerationResult:
         # Implement API call
-        pass
+        result = ModerationResult(provider=self.name, content_type=ContentType.TEXT)
+        # ... call API and parse response
+        return result
     
     def moderate_image(self, image_url: str, **kwargs) -> ModerationResult:
         # Implement API call
-        pass
+        result = ModerationResult(provider=self.name, content_type=ContentType.IMAGE)
+        # ... call API and parse response
+        return result
 ```
 
-2. Register in `src/providers/__init__.py`:
+2. Add configuration loader in `src/config.py`:
+
+```python
+@staticmethod
+def get_myprovider_config() -> Dict[str, Any]:
+    return {
+        "api_key": os.getenv("MYPROVIDER_API_KEY"),
+        # ... other config
+    }
+```
+
+3. Register in `src/providers/__init__.py`:
 
 ```python
 from .myprovider import MyProvider
 
 PROVIDERS = {
     "shumei": ShumeiProvider,
+    "huoshan": HuoshanProvider,
+    "yidun": YidunProvider,
+    "juntong": JunTongProvider,
     "myprovider": MyProvider,  # Add this line
 }
 ```
 
-3. Add configuration to `.env.example`:
+4. Add configuration to `.env.example`:
 
 ```env
 # My Provider
@@ -274,13 +307,49 @@ Reports are generated in the `reports/` directory with detailed metrics, confusi
 
 ## Environment Variables
 
+### Shumei (数美科技)
+
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `SHUMEI_ACCESS_KEY` | Shumei API access key | Yes (for Shumei) |
-| `SHUMEI_APP_ID` | Shumei application ID | No (default: 'default') |
-| `MAX_WORKERS` | Concurrent workers | No (default: 10) |
-| `REQUEST_INTERVAL` | Delay between requests (seconds) | No (default: 0.1) |
-| `REQUEST_TIMEOUT` | Request timeout (seconds) | No (default: 30) |
+| `SHUMEI_ACCESS_KEY` | 数美API Access Key | Yes |
+| `SHUMEI_APP_ID` | 应用ID | No (default: 'default') |
+| `SHUMEI_TEXT_URL` | 文本审核API地址 | No (has default) |
+| `SHUMEI_IMAGE_URL` | 图片审核API地址 | No (has default) |
+
+### Huoshan/Volcengine (火山引擎)
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `HUOSHAN_ACCESS_KEY` | 火山引擎 Access Key | Yes |
+| `HUOSHAN_SECRET_KEY` | 火山引擎 Secret Key | Yes |
+| `HUOSHAN_APP_ID` | LLM Shield AppID | Yes |
+| `HUOSHAN_REGION` | 区域 (cn-beijing/cn-shanghai) | No (default: cn-beijing) |
+
+### NetEase Yidun (网易易盾)
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `YIDUN_SECRET_ID` | 易盾 Secret ID | Yes |
+| `YIDUN_SECRET_KEY` | 易盾 Secret Key | Yes |
+| `YIDUN_BUSINESS_ID_TEXT` | 文本审核业务ID | Yes (for text) |
+| `YIDUN_BUSINESS_ID_IMAGE` | 图片审核业务ID | Yes (for image) |
+
+### Juntong (君同未来)
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `JUNTONG_TEXT_API_KEY` | 文本审核API Key | Yes (for text) |
+| `JUNTONG_IMAGE_API_KEY` | 图片审核API Key | Yes (for image) |
+| `JUNTONG_BASE_URL` | API基础URL | No (has default) |
+
+### Benchmark Configuration
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `MAX_WORKERS` | 并发工作线程数 | No (default: 10) |
+| `REQUEST_INTERVAL` | 请求间隔(秒) | No (default: 0.1) |
+| `REQUEST_TIMEOUT` | 请求超时(秒) | No (default: 30) |
+| `RETRY_TIMES` | 重试次数 | No (default: 3) |
 
 ## Contributing
 

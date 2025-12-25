@@ -47,6 +47,7 @@ class YidunProvider(BaseProvider):
     # API endpoints
     TEXT_URL = "http://as.dun.163.com/v5/text/check"
     IMAGE_URL = "http://as.dun.163.com/v5/image/check"
+    IMAGE_BASE64_URL = "http://as.dun.163.com/v5/image/base64Check"  # BASE64专用地址
     
     # Label mapping (Yidun label -> Chinese label)
     LABEL_MAPPING = {
@@ -154,8 +155,11 @@ class YidunProvider(BaseProvider):
         # Generate signature
         params["signature"] = self._gen_signature(params)
         
+        # 根据图片类型选择API地址：BASE64用base64Check，URL用check
+        api_url = self.IMAGE_BASE64_URL if img_type == 2 else self.IMAGE_URL
+        
         return self._call_api(
-            url=self.IMAGE_URL,
+            url=api_url,
             params=params,
             content_type=ContentType.IMAGE,
         )
@@ -222,8 +226,22 @@ class YidunProvider(BaseProvider):
                 logger.debug(f"{'='*60}")
                 logger.debug(f"URL: {url}")
                 logger.debug(f"Content Type: {content_type.value}")
-                # Don't log full params to avoid exposing secrets
                 logger.debug(f"DataId: {params.get('dataId')}")
+                # Log images info without BASE64 data
+                if 'images' in params:
+                    try:
+                        images_data = json.loads(params['images'])
+                        safe_images = []
+                        for img in images_data:
+                            safe_img = {k: v for k, v in img.items() if k != 'data'}
+                            if img.get('type') == 2:  # BASE64
+                                safe_img['data'] = f"[BASE64 DATA - {len(img.get('data', ''))} chars]"
+                            else:
+                                safe_img['data'] = img.get('data', '')[:100] + '...' if len(img.get('data', '')) > 100 else img.get('data', '')
+                            safe_images.append(safe_img)
+                        logger.debug(f"Images: {json.dumps(safe_images, ensure_ascii=False)}")
+                    except:
+                        logger.debug(f"Images: [parse error]")
                 
                 response = requests.post(
                     url,

@@ -195,9 +195,21 @@ class ShumeiProvider(BaseProvider):
                 logger.debug(f"{'='*60}")
                 logger.debug(f"URL: {url}")
                 logger.debug(f"Content Type: {content_type.value}")
-                # Don't log accessKey for security
-                safe_payload = {k: v for k, v in payload.items() if k != 'accessKey'}
-                safe_payload['accessKey'] = '***HIDDEN***'
+                # Don't log accessKey and BASE64 data for security/readability
+                safe_payload = {}
+                for k, v in payload.items():
+                    if k == 'accessKey':
+                        safe_payload[k] = '***HIDDEN***'
+                    elif k == 'data' and isinstance(v, dict):
+                        safe_data = {}
+                        for dk, dv in v.items():
+                            if dk == 'img' and isinstance(dv, str) and len(dv) > 200 and not dv.startswith('http'):
+                                safe_data[dk] = f"[BASE64 DATA - {len(dv)} chars]"
+                            else:
+                                safe_data[dk] = dv
+                        safe_payload[k] = safe_data
+                    else:
+                        safe_payload[k] = v
                 logger.debug(f"Payload:\n{json.dumps(safe_payload, ensure_ascii=False, indent=2)}")
                 
                 response = requests.post(

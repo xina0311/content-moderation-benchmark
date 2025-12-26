@@ -211,8 +211,12 @@ class HuoshanProvider(BaseProvider):
                 "Please set it in your .env file."
             )
     
-    def _get_client(self) -> ClientV2:
+    def _get_client(self):
         """Create and return LLM Shield client."""
+        if not HAS_VOLCENGINE_SDK:
+            raise ConfigurationError(
+                "volcenginesdkllmshield SDK is not available."
+            )
         region = self.config.get("region", "cn-beijing")
         
         # Use custom URL if provided, otherwise construct from region

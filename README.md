@@ -17,7 +17,7 @@ A comprehensive framework for benchmarking content moderation API providers. Com
 | Provider | Module | Status | Text | Image |
 |----------|--------|--------|------|-------|
 | 数美科技 (Shumei) | `shumei` | ✅ Ready | ✅ | ✅ |
-| 火山引擎 (Huoshan/Volcengine) | `huoshan` | ✅ Ready | ✅ | ❌ (LLM Shield不支持) |
+| 火山引擎 (Huoshan/Volcengine) | `huoshan` | ✅ Ready | ✅ | ✅ (BASE64) |
 | 网易易盾 (NetEase Yidun) | `yidun` | ✅ Ready | ✅ | ✅ |
 | 君同未来 (Juntong) | `juntong` | ✅ Ready | ✅ | ✅ |
 
@@ -324,6 +324,7 @@ Reports are generated in the `reports/` directory with detailed metrics, confusi
 | `HUOSHAN_SECRET_KEY` | 火山引擎 Secret Key | Yes |
 | `HUOSHAN_APP_ID` | LLM Shield AppID | Yes |
 | `HUOSHAN_REGION` | 区域 (cn-beijing/cn-shanghai) | No (default: cn-beijing) |
+| `HUOSHAN_CUSTOM_URL` | 自定义API URL | No |
 
 ### NetEase Yidun (网易易盾)
 

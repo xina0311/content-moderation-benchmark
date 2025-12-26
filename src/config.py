@@ -80,6 +80,7 @@ class Config:
             "secret_key": os.getenv("HUOSHAN_SECRET_KEY", ""),
             "app_id": os.getenv("HUOSHAN_APP_ID", ""),
             "region": os.getenv("HUOSHAN_REGION", "cn-beijing"),
+            "custom_url": os.getenv("HUOSHAN_CUSTOM_URL", ""),
         }
     
     @classmethod

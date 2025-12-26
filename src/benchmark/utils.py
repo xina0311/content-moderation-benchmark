@@ -6,6 +6,8 @@ Separated to avoid circular imports.
 import socket
 import platform
 import os
+import re
+import base64
 from datetime import datetime
 from typing import Dict
 
@@ -82,6 +84,47 @@ def get_machine_info() -> Dict[str, str]:
                                         os.environ.get("AWS_REGION", "local"))
     
     return info
+
+
+def is_base64_image(content: str) -> bool:
+    """
+    Check if the content is a base64 encoded image.
+    
+    Args:
+        content: String to check
+        
+    Returns:
+        True if content appears to be base64 image data
+    """
+    if not content or len(content) < 100:
+        return False
+    
+    # Check if it starts with data URI scheme
+    if content.startswith('data:image/'):
+        return True
+    
+    # Check if it looks like raw base64 (no URL-like patterns)
+    if content.startswith(('http://', 'https://', '/')):
+        return False
+    
+    # Check for valid base64 characters
+    base64_pattern = re.compile(r'^[A-Za-z0-9+/=]+$')
+    
+    # Sample first 1000 chars for efficiency
+    sample = content[:1000].replace('\n', '').replace('\r', '').replace(' ', '')
+    
+    if not base64_pattern.match(sample):
+        return False
+    
+    # Try to decode a small portion to verify
+    try:
+        # Base64 strings should have length divisible by 4
+        test_len = min(100, len(sample))
+        test_len = test_len - (test_len % 4)
+        base64.b64decode(sample[:test_len])
+        return True
+    except Exception:
+        return False
 
 
 def get_report_subdir_name() -> str:

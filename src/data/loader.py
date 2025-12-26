@@ -158,12 +158,37 @@ class DataLoader:
         cases = []
         workbook = openpyxl.load_workbook(self.file_path, read_only=True)
         
+        # 定义备选 sheet 名称
+        fallback_names = {
+            ContentType.TEXT: ["文本测试题", "Sheet1", "文本", "text", "Text", "文本测试"],
+            ContentType.IMAGE: ["图片测试题", "Sheet2", "图片", "image", "Image", "图片测试"],
+        }
+        
         try:
-            if sheet_name not in workbook.sheetnames:
-                logger.warning(f"Sheet '{sheet_name}' not found. Available: {workbook.sheetnames}")
-                return cases
+            # 尝试找到合适的 sheet
+            sheet = None
+            used_name = sheet_name
             
-            sheet = workbook[sheet_name]
+            if sheet_name in workbook.sheetnames:
+                sheet = workbook[sheet_name]
+            else:
+                # 尝试备选名称
+                for name in fallback_names.get(content_type, []):
+                    if name in workbook.sheetnames:
+                        sheet = workbook[name]
+                        used_name = name
+                        logger.info(f"Sheet '{sheet_name}' not found. Using fallback: '{name}'")
+                        break
+                
+                # 如果都没找到，使用第一个 sheet
+                if sheet is None and workbook.sheetnames:
+                    sheet = workbook[workbook.sheetnames[0]]
+                    used_name = workbook.sheetnames[0]
+                    logger.warning(f"Sheet '{sheet_name}' not found. Using first sheet: '{used_name}'")
+            
+            if sheet is None:
+                logger.error(f"No sheets found in workbook")
+                return cases
             
             # Expected columns: 类型(黑/白), 序号, 内容, 预期风险
             for row_idx, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=1):
